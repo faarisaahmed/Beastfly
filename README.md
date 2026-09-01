@@ -15,8 +15,8 @@ Pure Python 3, standard library only. No pip, no build step.
 Grab the [latest release](https://github.com/faarisaahmed/Beastfly/releases/latest):
 
 ```sh
-curl -fsSL https://github.com/faarisaahmed/Beastfly/releases/latest/download/beastfly-0.1.0.tar.gz | tar xz
-cd beastfly-0.1.0
+curl -fsSL https://github.com/faarisaahmed/Beastfly/releases/latest/download/beastfly.tar.gz | tar xz
+cd beastfly-*
 ./install.sh
 beastfly
 ```

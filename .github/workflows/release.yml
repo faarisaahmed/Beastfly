@@ -48,7 +48,10 @@ jobs:
           cd dist
           tar -czf "$NAME.tar.gz" "$NAME"
           zip -qr "$NAME.zip" "$NAME"
-          sha256sum "$NAME.tar.gz" "$NAME.zip" > checksums.txt
+          # Version-free copies so install instructions never go stale.
+          cp "$NAME.tar.gz" beastfly.tar.gz
+          cp "$NAME.zip" beastfly.zip
+          sha256sum "$NAME.tar.gz" "$NAME.zip" beastfly.tar.gz beastfly.zip > checksums.txt
           ls -la
 
       - name: Publish the release
@@ -60,7 +63,7 @@ jobs:
           ### Install
 
           ```sh
-          curl -fsSL https://github.com/faarisaahmed/Beastfly/releases/latest/download/beastfly-VERSION.tar.gz | tar xz
+          curl -fsSL https://github.com/faarisaahmed/Beastfly/releases/latest/download/beastfly.tar.gz | tar xz
           cd beastfly-VERSION
           ./install.sh
           beastfly
