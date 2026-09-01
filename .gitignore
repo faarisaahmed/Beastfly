@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# macOS
+.DS_Store
+._*
+
+# Beastfly runtime state — never commit these. They can contain your Nexus
+# API key, your game paths, and your save backups.
+.beastfly/
+config.json
+profiles.json
+installed.json
+backups/
+cache/
+saves_*.zip
+
+# Local scratch
+*.log

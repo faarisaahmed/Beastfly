@@ -1,0 +1,91 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Work out the version
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "number=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Check the tag matches beastfly/ui.py
+        run: |
+          CODE=$(python -c "import re,pathlib;print(re.search(r'VERSION = \"([^\"]+)\"', pathlib.Path('beastfly/ui.py').read_text()).group(1))")
+          if [ "$CODE" != "${{ steps.version.outputs.number }}" ]; then
+            echo "Tag is ${{ steps.version.outputs.number }} but VERSION in beastfly/ui.py is $CODE."
+            exit 1
+          fi
+
+      - run: tests/no-secrets.sh
+      - run: tests/smoke.sh
+
+      - name: Package
+        run: |
+          NAME="beastfly-${{ steps.version.outputs.number }}"
+          mkdir -p "dist/$NAME"
+          cp -R beastfly install.sh tests README.md LICENSE "dist/$NAME/"
+          find "dist/$NAME" -name '__pycache__' -type d -exec rm -rf {} +
+          cd dist
+          tar -czf "$NAME.tar.gz" "$NAME"
+          zip -qr "$NAME.zip" "$NAME"
+          sha256sum "$NAME.tar.gz" "$NAME.zip" > checksums.txt
+          ls -la
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.number }}"
+          cat > notes.md <<'EOF'
+          ### Install
+
+          ```sh
+          curl -fsSL https://github.com/faarisaahmed/Beastfly/releases/latest/download/beastfly-VERSION.tar.gz | tar xz
+          cd beastfly-VERSION
+          ./install.sh
+          beastfly
+          ```
+
+          `install.sh` drops a `beastfly` launcher in `~/.local/bin`. Nothing else
+          is written outside `~/.beastfly`. First run walks you through `/setup`.
+
+          Requires Python 3.8+ (macOS ships one). No other dependencies.
+
+          ### What it is
+
+          A terminal mod manager for Hollow Knight: Silksong, aimed at running the
+          **Windows** build on **macOS** through **Porting Kit**, where the GUI
+          managers can't find your install.
+
+          Thunderstore install/update with dependency resolution, Nexus version
+          checks, profiles as enable/disable snapshots, arrow-key mod and profile
+          pickers, and automatic save backups before every launch.
+
+          See the [README](https://github.com/faarisaahmed/Beastfly#readme) for the
+          full command list.
+          EOF
+          sed -i "s/VERSION/$VERSION/g" notes.md
+          gh release create "${{ steps.version.outputs.tag }}" \
+            dist/*.tar.gz dist/*.zip dist/checksums.txt \
+            --title "Beastfly $VERSION" \
+            --notes-file notes.md
