@@ -268,6 +268,30 @@ they're just skipped during version checks.
 Mods installed by hand with no manifest and no Nexus-style name can't be
 version-checked at all. Beastfly says so rather than guessing.
 
+## Finding your install
+
+`/setup` searches for the game — GOG, Steam, Xbox and Wine-wrapper layouts
+under `~/Downloads`, `~/Applications`, `/Applications` and `~/Games` — and
+shows you what it found rather than making you type a path.
+
+**BepInEx is searched for separately**, because it isn't always next to the
+exe:
+
+- next to the game (the normal case)
+- under `Content/`, which is how Xbox installs nest things
+- one level up from the exe
+- anywhere else inside the same Wine prefix
+- inside another manager's profile folder (r2modman, Thunderstore Mod Manager,
+  Cogfly), which keep a separate BepInEx tree per profile
+
+If it turns one up somewhere unexpected, `/setup` offers it with a note about
+where it came from. If there's genuinely none, it offers to install the
+Thunderstore BepInEx pack, and failing that asks for a path. So a non-standard
+layout should not mean typing paths by hand — and if it does for you, that's a
+bug worth [reporting](https://github.com/faarisaahmed/Beastfly/issues).
+
+You can always override both paths in `/settings`.
+
 ## Save backups
 
 Silksong keeps its saves *inside the Wine prefix*
@@ -282,17 +306,46 @@ launching:
   Saves backed up (9 files) → saves_2026-09-01_112723_Default.zip
 ```
 
-Snapshots are zips in `~/.beastfly/backups/`, a few hundred KB each, and the
-oldest are pruned past twelve. `Player.log` is skipped since it's regenerated
-every run.
+`/backup` on its own lets you pick which slots to take, newest first, so you
+can grab just the run you care about:
 
-- `/backup` — make one now, labelled with the active profile
+```
+Back up which saves?  ·  newest first
+
+  ❯ [✓] user1.dat                            287 KB · 3 files · 19h ago
+    [✓] user.dat                             190 KB · 3 files · 11d ago
+    [✓] Settings and mod data                3 files
+```
+
+A slot travels with its shadow files — Silksong keeps a `.bak1` and a
+version-stamped copy alongside each `userN.dat`, and they're backed up
+together.
+
+- `/backup` — choose slots
+- `/backup all` — the whole save folder
 - `/backup list` — what you have, with sizes and ages
-- `/backup restore` — pick one from a list and put it back
+- `/backup restore` — put one back **(experimental, see below)**
 
-Restoring takes a snapshot of the current saves first, so it can't be the last
-irreversible step. Turn the automatic one off under `/settings` → *Back up saves
-before launching* if you'd rather do it yourself.
+Snapshots are zips in `~/.beastfly/backups/`, a few hundred KB each, oldest
+pruned past twelve. `Player.log` is skipped. Turn the automatic one off under
+`/settings` → *Back up saves before launching*.
+
+### Restoring is experimental
+
+**Treat `/backup restore` as a last resort, not a safety net you rely on.**
+
+All it does is copy the backed-up bytes back over your save folder. It does
+*not* understand Silksong's own integrity checks, its `.bak1` shadow files, or
+its version-stamped copies, and a game update between backup and restore makes
+it less likely to work. It may not give you back the run you expect.
+
+What it does get right: it snapshots your current saves *before* overwriting
+them, so restoring is itself undoable — if the result looks wrong,
+`/backup restore` the `before-restore` snapshot to get back where you were.
+Close the game first; it will rewrite saves on exit otherwise.
+
+The backup half is the reliable half. If a save really matters, keep a copy
+somewhere outside `~/.beastfly` too.
 
 ## Launching
 
