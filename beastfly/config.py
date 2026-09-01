@@ -216,3 +216,93 @@ def find_installs():
         add(candidate, None, "native")
 
     return found
+
+
+# ---------- BepInEx discovery ----------
+
+BEPINEX_MARKER = "core/BepInEx.dll"
+
+# Other managers keep a BepInEx tree per profile, well away from the game.
+MANAGER_ROOTS = (
+    HOME / "Library/Application Support/r2modmanPlus-local",
+    HOME / "Library/Application Support/ThunderstoreModManager",
+    HOME / ".config/r2modmanPlus-local",
+    HOME / ".cogfly",
+    HOME / "Library/Application Support/cogfly",
+)
+
+
+def _is_bepinex(path):
+    return _exists(path / BEPINEX_MARKER)
+
+
+def find_bepinex(game_dir, deep=True):
+    """Locate BepInEx trees for an install. Returns [(path, kind)] best-first.
+
+    Usually it sits next to the exe, but not always: Xbox installs nest the
+    game under Content/, and r2modman-style managers keep a separate tree per
+    profile. Guessing <game>/BepInEx and stopping there is what makes people
+    type paths by hand.
+    """
+    found = []
+    seen = set()
+
+    def add(path, kind):
+        if path is None:
+            return
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return
+        if resolved in seen or not _is_bepinex(resolved):
+            return
+        seen.add(resolved)
+        found.append((resolved, kind))
+
+    if game_dir is not None:
+        game_dir = Path(game_dir)
+        add(game_dir / "BepInEx", "next to the game")
+        add(game_dir / "Content" / "BepInEx", "under Content/")
+        # Some layouts put the exe in a subfolder of the install root.
+        for parent in list(game_dir.parents)[:2]:
+            add(parent / "BepInEx", "one level up")
+
+        # Anywhere inside the same Wine prefix.
+        if deep:
+            for parent in game_dir.parents:
+                if parent.name == "drive_c":
+                    for marker in _bounded_glob(parent, "BepInEx", 6):
+                        add(marker, "elsewhere in the prefix")
+                    break
+
+    # Trees maintained by another mod manager.
+    for root in MANAGER_ROOTS:
+        if not _is_dir(root):
+            continue
+        for marker in _bounded_glob(root, "BepInEx", 5):
+            add(marker, "another mod manager's profile")
+
+    return found
+
+
+def _bounded_glob(root, name, depth):
+    """Directories called `name` within `depth` levels of `root`.
+
+    Hand-rolled rather than rglob so a deep prefix can't stall discovery.
+    """
+    out = []
+    frontier = [(root, 0)]
+    while frontier and len(out) < 40:
+        current, level = frontier.pop()
+        if level > depth:
+            continue
+        for entry in _listdir(current):
+            if not _is_dir(entry):
+                continue
+            if entry.name == name:
+                out.append(entry)
+                continue
+            if entry.name.endswith(".app") or entry.name.startswith("."):
+                continue
+            frontier.append((entry, level + 1))
+    return out

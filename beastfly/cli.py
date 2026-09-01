@@ -16,7 +16,7 @@ from . import picker
 from . import prompt as prompt_mod
 from . import saves as saves_mod
 from . import ui
-from .config import Config, find_installs
+from .config import Config, find_bepinex, find_installs
 from .profiles import Profiles, ProfileError
 from .sources import nexus, thunderstore
 
@@ -45,8 +45,13 @@ class App:
             ui.fail("No game path configured yet. Run " + ui.accent("/setup") + ".")
             return False
         if not self.conf.bepinex_installed:
-            ui.note("BepInEx isn't installed in %s." % self.conf.game)
-            ui.info("Run /setup to install it.")
+            ui.note("No BepInEx at %s." % self.conf.bepinex)
+            elsewhere = find_bepinex(self.conf.game)
+            if elsewhere:
+                ui.info("But there is one at %s" % elsewhere[0][0])
+                ui.info("Run /setup to point Beastfly at it.")
+            else:
+                ui.info("Run /setup to install it.")
         return True
 
     def pick_mod(self, query, action="use"):
@@ -1101,59 +1106,143 @@ def cmd_launch(app, args):
 
 
 def cmd_backup(app, args):
-    """Snapshot the save folder, list snapshots, or restore one."""
+    """Snapshot save files, list snapshots, or restore one."""
     if not app.require_game():
         return
-    action = args[0].lower() if args else "new"
+    action = args[0].lower() if args else "pick"
 
     if action in ("ls", "list"):
-        existing = saves_mod.snapshots()
-        print()
-        print(ui.header("Save backups"))
-        print()
-        if not existing:
-            ui.info("No backups yet. /backup makes one.")
-        for path, when, size in existing:
-            print("  " + ui.white(ui.pad(path.stem.replace("saves_", ""), 34))
-                  + ui.grey(ui.pad(_bytes(size), 10) + _ago(time.time() - when)))
-        print()
-        ui.info(str(saves_mod.backup_dir()))
-        print()
-        return
-
+        return _backup_list(app)
     if action == "restore":
-        existing = saves_mod.snapshots()
-        if not existing:
-            ui.fail("No backups to restore.")
-            return
-        if picker.available():
-            rows = [picker.Row(path.stem.replace("saves_", ""),
-                               "%s · %s" % (_bytes(size), _ago(time.time() - when)),
-                               payload=path)
-                    for path, when, size in existing]
-            chosen = picker.choose(
-                ui.bold(ui.white("Restore which backup?")), rows)
-            if chosen is None:
-                ui.info("Nothing restored.")
-                return
-            snapshot = chosen.payload
-        else:
-            snapshot = existing[0][0]
-        ui.note("This overwrites your current saves.")
-        if not ui.confirm("Restore %s?" % snapshot.stem, False):
-            return
-        safety = saves_mod.restore(app.conf, snapshot)
-        ui.good("Restored %s." % snapshot.stem)
-        ui.info("Your previous saves were kept as %s." % safety.stem)
-        return
+        return _backup_restore(app)
+    if action == "all":
+        return _make_backup(app, None, app.profiles.active)
 
-    label = " ".join(args) if args and action != "new" else app.profiles.active
+    slots, other = saves_mod.slots(app.conf)
+    if not slots:
+        # Nothing recognisable - just take the lot.
+        return _make_backup(app, None, app.profiles.active)
+    if not picker.available():
+        return _make_backup(app, None, app.profiles.active)
+
+    rows = []
+    for slot in slots:
+        rows.append(picker.Row(
+            slot["label"],
+            "%s · %s · %s" % (_bytes(slot["size"]),
+                              ui.plural(len(slot["files"]), "file"),
+                              _ago(time.time() - slot["mtime"])),
+            checked=True, payload=slot["files"]))
+    if other:
+        rows.append(picker.Row("Settings and mod data",
+                               ui.plural(len(other), "file"),
+                               checked=True, payload=other))
+
+    header = (ui.bold(ui.white("Back up which saves?")) + ui.grey("  ·  ")
+              + ui.grey("newest first"))
+    result = picker.checklist(header, rows)
+    if result is None:
+        ui.info("Nothing backed up.")
+        return
+    selected = [f for row in result if row.checked for f in row.payload]
+    if not selected:
+        ui.info("Nothing selected.")
+        return
+    label = app.profiles.active
+    if len([r for r in result if r.checked]) == 1:
+        label = result[[r.checked for r in result].index(True)].label.replace(".dat", "")
+    _make_backup(app, selected, label)
+
+
+def _make_backup(app, only, label):
     try:
-        path, count = saves_mod.create(app.conf, label)
+        path, count = saves_mod.create(app.conf, label, only)
     except OSError as error:
         ui.fail(str(error))
         return
     ui.good("Backed up %s to %s." % (ui.plural(count, "save file"), path.name))
+
+
+def _backup_list(app):
+    existing = saves_mod.snapshots()
+    print()
+    print(ui.header("Save backups"))
+    print()
+    if not existing:
+        ui.info("No backups yet. /backup makes one.")
+    for path, when, size in existing:
+        print("  " + ui.white(ui.pad(path.stem.replace("saves_", ""), 34))
+              + ui.grey(ui.pad(_bytes(size), 10) + _ago(time.time() - when)))
+    print()
+    ui.info(str(saves_mod.backup_dir()))
+    print()
+
+
+def _backup_restore(app):
+    existing = saves_mod.snapshots()
+    if not existing:
+        ui.fail("No backups to restore.")
+        return
+
+    print()
+    ui.note(ui.bold("Restoring saves is experimental."))
+    ui.info("It copies the backed-up bytes back over your save folder. That is")
+    ui.info("all it does - it does not understand Silksong's own integrity")
+    ui.info("checks, its .bak1 shadow files, or version-stamped copies. It may")
+    ui.info("not give you the run you expect, and a game version change since")
+    ui.info("the backup makes it less likely to work. Close the game first.")
+    print()
+
+    if picker.available():
+        rows = [picker.Row(path.stem.replace("saves_", ""),
+                           "%s · %s" % (_bytes(size), _ago(time.time() - when)),
+                           payload=path)
+                for path, when, size in existing]
+        chosen = picker.choose(ui.bold(ui.white("Restore which backup?")), rows)
+        if chosen is None:
+            ui.info("Nothing restored.")
+            return
+        snapshot = chosen.payload
+    else:
+        snapshot = existing[0][0]
+        ui.info("Newest backup: " + snapshot.name)
+
+    only = None
+    slots, other = saves_mod.contents(snapshot)
+    if picker.available() and slots:
+        rows = [picker.Row(slot["label"], ui.plural(len(slot["files"]), "file"),
+                           checked=True, payload=slot["files"])
+                for slot in slots]
+        if other:
+            rows.append(picker.Row("Settings and mod data",
+                                   ui.plural(len(other), "file"),
+                                   checked=True, payload=other))
+        result = picker.checklist(
+            ui.bold(ui.white("Restore which slots?"))
+            + ui.grey("  ·  from " + snapshot.stem.replace("saves_", "")), rows)
+        if result is None:
+            ui.info("Nothing restored.")
+            return
+        only = [f for row in result if row.checked for f in row.payload]
+        if not only:
+            ui.info("Nothing selected.")
+            return
+
+    if game_mod.is_running():
+        ui.note("Silksong is running. It will overwrite these on exit.")
+        if not ui.confirm("Restore anyway?", False):
+            return
+
+    scope = "everything in it" if only is None else ui.plural(len(only), "file")
+    if not ui.confirm("Overwrite your current saves with %s?" % scope, False):
+        ui.info("Nothing restored.")
+        return
+
+    safety = saves_mod.restore(app.conf, snapshot, only)
+    ui.good("Restored from %s." % snapshot.stem.replace("saves_", ""))
+    ui.info("Your saves from a moment ago were kept as %s"
+            % safety.stem.replace("saves_", ""))
+    ui.info("If the result looks wrong, /backup restore that one to undo.")
 
 
 def _bytes(size):
@@ -1270,11 +1359,29 @@ def cmd_setup(app, args):
     # ---- BepInEx
     print()
     if app.conf.bepinex_installed:
-        ui.good("BepInEx is installed.")
+        ui.good("BepInEx found at " + ui.grey(str(app.conf.bepinex)))
     else:
-        ui.note("BepInEx is not installed - mods won't load without it.")
-        if ui.confirm("Install the BepInEx pack from Thunderstore?", True):
-            _install_bepinex(app)
+        ui.info("Looking for BepInEx...")
+        candidates = find_bepinex(app.conf.game)
+        if candidates:
+            ui.good("Found BepInEx somewhere other than next to the game.")
+            chosen = ui.choose("Use which BepInEx?", candidates,
+                               lambda row: "%s %s" % (
+                                   ui.white(ui.truncate(str(row[0]), 54)),
+                                   ui.grey(row[1])))
+            if chosen is not None:
+                app.conf["bepinex_path"] = str(chosen[0])
+                ui.good("BepInEx path: " + str(chosen[0]))
+                app.invalidate()
+        if not app.conf.bepinex_installed:
+            ui.note("No BepInEx found - mods won't load without it.")
+            if ui.confirm("Install the BepInEx pack from Thunderstore?", True):
+                _install_bepinex(app)
+            else:
+                typed = ui.ask("Path to an existing BepInEx folder (blank to skip)")
+                if typed:
+                    app.conf["bepinex_path"] = str(Path(typed.strip()).expanduser())
+                    app.invalidate()
 
     # ---- adopt existing mods
     print()
@@ -1672,9 +1779,10 @@ COMMANDS = {
 
     "launch":   (cmd_launch, "", "Launch Silksong", "GAME"),
     "backup":   (cmd_backup, "", "Snapshot your save files", "GAME",
-                 ["/backup           make one now",
+                 ["/backup           choose which slots to back up",
+                  "/backup all       the whole save folder",
                   "/backup list      show what you have",
-                  "/backup restore   put one back"]),
+                  "/backup restore   put one back (experimental)"]),
     "logs":     (cmd_logs, "", "Show the BepInEx log", "GAME",
                  ["/logs 100      last 100 lines",
                   "/logs --errors errors and warnings only"]),
