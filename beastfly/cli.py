@@ -798,7 +798,8 @@ def _apply_update(app, mod, package, current, latest):
 
 
 def _report_nexus(app, mod, current, latest):
-    ui.note("%s: %s -> %s available on Nexus." % (mod.id, current or "?", latest))
+    ui.note("%s: %s -> %s available on Nexus."
+            % (mod.name or mod.id, current or "?", latest))
     ui.info("Nexus blocks API downloads, so grab it here, then /add it:")
     ui.info("  " + nexus.page_url(app.conf, mod.source_id))
 
@@ -855,7 +856,7 @@ def cmd_updates(app, args):
         ui.good("Everything is up to date.")
     for mod, current, latest, _ in outdated:
         print("  " + ui.warn(ui.UPDATE) + " "
-              + ui.pad(ui.white(ui.truncate(mod.id, 28)), 30)
+              + ui.pad(ui.white(ui.truncate(mod.name or mod.id, 28)), 30)
               + ui.grey("%s -> " % current) + ui.warn(latest)
               + ui.grey("  " + mod.source))
     for mod, message in errors:
@@ -1113,8 +1114,8 @@ def cmd_backup(app, args):
         if not existing:
             ui.info("No backups yet. /backup makes one.")
         for path, when, size in existing:
-            print("  " + ui.white(ui.pad(path.stem.replace("saves_", ""), 26))
-                  + ui.grey("%-10s %s" % (_bytes(size), _ago(time.time() - when))))
+            print("  " + ui.white(ui.pad(path.stem.replace("saves_", ""), 34))
+                  + ui.grey(ui.pad(_bytes(size), 10) + _ago(time.time() - when)))
         print()
         ui.info(str(saves_mod.backup_dir()))
         print()
