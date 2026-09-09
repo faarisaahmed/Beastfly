@@ -79,6 +79,18 @@ location:
 cd /wherever/beastfly/lives && ./install.sh
 ```
 
+**Mods are installed and enabled, but the game plays vanilla.** This one fails
+silently, so check `/logs` first:
+
+- Log with your mods listed in it → they loaded, and the mod itself is the
+  problem.
+- `No BepInEx log yet` after actually playing → BepInEx never ran. Under a Wine
+  wrapper the loader needs `winhttp` treated as a native library, which not
+  every wrapper does by default. Open the wrapper's Wine configuration
+  (`winecfg` → *Libraries*), add `winhttp`, and set it to *native, builtin*.
+  Launching the game outside the wrapper won't load mods either — leave
+  *Launch through Porting Kit* on in `/settings`.
+
 `install.sh` writes one file, `~/.local/bin/beastfly`, and nothing else. All
 state lives in `~/.beastfly/`, so the only thing Beastfly ever puts in your
 game folder is mods.

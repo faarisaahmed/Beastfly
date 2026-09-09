@@ -160,6 +160,11 @@ class App:
             pending = self.cached_update_count()
             if pending:
                 ui.note("%s available. Run /updates." % ui.plural(pending, "update"))
+        # The slash menu is the whole interface, but a bare prompt doesn't
+        # advertise it - the first thing to type has to be on screen.
+        if sys.stdin.isatty():
+            ui.info("Type " + ui.accent("/") + " for the command menu, or "
+                    + ui.accent("/help") + ".")
         print()
 
     def cached_update_count(self):
@@ -1397,7 +1402,8 @@ def cmd_setup(app, args):
             _set_nexus_key(app)
 
     print()
-    ui.good("Setup done. Try /toggle, /profiles or /launch.")
+    ui.good("Setup done.")
+    ui.info("/add installs mods · /toggle turns them on and off · /launch plays.")
     print()
 
 
