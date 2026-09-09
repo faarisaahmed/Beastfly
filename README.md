@@ -12,28 +12,76 @@ Pure Python 3, standard library only. No pip, no build step.
 
 ## Install
 
-Grab the [latest release](https://github.com/faarisaahmed/Beastfly/releases/latest):
+Open Terminal (⌘-Space, type "Terminal", Enter) and work through these three
+steps. Copy and paste each block.
+
+**1. Check for Python.** Beastfly needs Python 3.8 or newer:
 
 ```sh
+python3 --version
+```
+
+- Prints a version like `Python 3.12.2` → go to step 2.
+- Opens a dialog offering to install developer tools → accept it, let it
+  finish, then run the command again. macOS hasn't included Python since
+  version 12.3, so this is normal.
+- Says `command not found` → install Python from
+  [python.org/downloads](https://www.python.org/downloads/), then reopen
+  Terminal. The standard installer is all you need; there is nothing to
+  configure.
+
+**2. Download and install.** Beastfly runs from the folder you unpack it into,
+so pick somewhere permanent — not `~/Downloads`, which people tend to clear
+out. These lines use a `beastfly` folder in your home directory:
+
+```sh
+mkdir -p ~/beastfly && cd ~/beastfly
 curl -fsSL https://github.com/faarisaahmed/Beastfly/releases/latest/download/beastfly.tar.gz | tar xz
 cd beastfly-*
 ./install.sh
+```
+
+**3. Run it:**
+
+```sh
 beastfly
 ```
 
-Or from a clone:
+The first run finds your Silksong install, then offers to install **BepInEx** —
+the loader that actually runs mods, without which nothing loads. Press `y` and
+it downloads the current version and puts it beside the game exe for you. Any
+mods you already have are adopted as they are.
+
+That's it. From there: `/add` installs mods, `/toggle` turns them on and off,
+`/launch` starts the game.
+
+Prefer a clone? Same thing, and `git pull && ./install.sh` updates it:
 
 ```sh
-git clone https://github.com/faarisaahmed/Beastfly.git
-cd Beastfly && ./install.sh
+git clone https://github.com/faarisaahmed/Beastfly.git ~/beastfly
+cd ~/beastfly && ./install.sh
 ```
 
-`install.sh` drops a `beastfly` launcher in `~/.local/bin` and writes nothing
-else. All state lives in `~/.beastfly/`, so the only thing Beastfly ever puts
-in your game folder is mods. First run walks you through `/setup`, which
-auto-detects your install.
+### If something goes wrong
 
-Requires Python 3.8+ — macOS ships one. No other dependencies.
+**`beastfly: command not found`** — `install.sh` put the launcher in
+`~/.local/bin`, which isn't on your `PATH`. Add it and reopen Terminal:
+
+```sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+```
+
+**`beastfly: source not found at …`** — you moved or deleted the folder you
+installed from. The launcher is a pointer, not a copy. Point it at the new
+location:
+
+```sh
+cd /wherever/beastfly/lives && ./install.sh
+```
+
+`install.sh` writes one file, `~/.local/bin/beastfly`, and nothing else. All
+state lives in `~/.beastfly/`, so the only thing Beastfly ever puts in your
+game folder is mods.
 
 ## Use
 
@@ -284,11 +332,16 @@ exe:
 - inside another manager's profile folder (r2modman, Thunderstore Mod Manager,
   Cogfly), which keep a separate BepInEx tree per profile
 
-If it turns one up somewhere unexpected, `/setup` offers it with a note about
-where it came from. If there's genuinely none, it offers to install the
-Thunderstore BepInEx pack, and failing that asks for a path. So a non-standard
-layout should not mean typing paths by hand — and if it does for you, that's a
-bug worth [reporting](https://github.com/faarisaahmed/Beastfly/issues).
+If it turns one up somewhere unexpected, you're offered it with a note about
+where it came from. If there's genuinely none, you get a `y/n` to install the
+current Thunderstore BepInEx pack into the game folder, and failing that
+`/setup` asks for a path. So a non-standard layout should not mean typing paths
+by hand — and if it does for you, that's a bug worth
+[reporting](https://github.com/faarisaahmed/Beastfly/issues).
+
+That offer isn't buried in `/setup`: any time Beastfly notices the loader is
+missing — at startup, or on the first command you run — it says so and asks,
+once per session. Answering no leaves everything untouched.
 
 You can always override both paths in `/settings`.
 

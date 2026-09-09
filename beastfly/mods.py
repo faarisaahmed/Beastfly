@@ -595,6 +595,29 @@ def find_bepinex_package(conf):
     return best
 
 
+def _bepinex_prefix(names):
+    """The leading path to drop so that BepInEx/ lands beside the game exe.
+
+    Packs are not laid out alike. The Silksong pack wraps the payload in
+    'BepInExPack/' and parks Thunderstore's manifest.json and icon.png at the
+    root beside it; others put 'BepInEx/' straight at the top. Anchoring on the
+    loader's own core/ folder handles both, where stripping a lone wrapper
+    folder handles neither.
+    """
+    anchor = "BepInEx/core/"
+    prefixes = sorted((n[:n.index(anchor)] for n in names if anchor in n), key=len)
+    if prefixes:
+        return prefixes[0]
+
+    # No recognisable loader tree - fall back to stripping a single wrapper.
+    roots = _zip_roots(names)
+    if len(roots) == 1:
+        only = next(iter(roots))
+        if only.lower() != "bepinex":
+            return only + "/"
+    return ""
+
+
 def install_bepinex(archive, conf, on_progress=None):
     """Unpack a BepInEx pack into the game root.
 
@@ -612,25 +635,26 @@ def install_bepinex(archive, conf, on_progress=None):
         names = [n for n in zf.namelist()
                  if not n.endswith("/") and not n.startswith("__MACOSX")
                  and Path(n).name not in SKIP_NAMES]
-        roots = _zip_roots(names)
-        # Strip a single wrapper folder, but never strip 'BepInEx' itself.
-        strip = ""
-        if len(roots) == 1:
-            only = next(iter(roots))
-            if only.lower() != "bepinex":
-                strip = only + "/"
+        strip = _bepinex_prefix(names)
 
         total = len(names)
         written = 0
         for index, name in enumerate(names, 1):
-            relative = name[len(strip):] if strip and name.startswith(strip) else name
+            if strip:
+                # Anything outside the payload folder is packaging, not game
+                # files - Thunderstore's manifest.json, icon.png and README.
+                if not name.startswith(strip):
+                    continue
+                relative = name[len(strip):]
+            else:
+                relative = name
             if not relative:
                 continue
             target = _safe_member(relative, game)
             if target is None:
                 continue
             # Never overwrite an existing config the user has tuned.
-            if target.exists() and target.suffix in (".cfg", ".ini") and written:
+            if target.exists() and target.suffix in (".cfg", ".ini"):
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(name) as src, open(target, "wb") as dst:
