@@ -29,6 +29,9 @@ class App:
         self.profiles = Profiles()
         self._mods = None
         self.running = True
+        # Set once BepInEx has been offered, so a "no" isn't re-asked on
+        # every command for the rest of the session.
+        self.asked_bepinex = False
 
     # ------------------------------------------------------------ state
 
@@ -44,14 +47,7 @@ class App:
         if not self.conf.configured:
             ui.fail("No game path configured yet. Run " + ui.accent("/setup") + ".")
             return False
-        if not self.conf.bepinex_installed:
-            ui.note("No BepInEx at %s." % self.conf.bepinex)
-            elsewhere = find_bepinex(self.conf.game)
-            if elsewhere:
-                ui.info("But there is one at %s" % elsewhere[0][0])
-                ui.info("Run /setup to point Beastfly at it.")
-            else:
-                ui.info("Run /setup to install it.")
+        ensure_bepinex(self)
         return True
 
     def pick_mod(self, query, action="use"):
@@ -155,6 +151,11 @@ class App:
             enabled,
             "BepInEx ok" if self.conf.bepinex_installed else "BepInEx missing",
         ))
+        if not self.conf.bepinex_installed:
+            # Nothing else works without the loader, so deal with it before
+            # showing update counts and a prompt.
+            print()
+            ensure_bepinex(self)
         if self.conf["show_update_notifications"] and self.conf["check_updates"]:
             pending = self.cached_update_count()
             if pending:
@@ -1361,27 +1362,14 @@ def cmd_setup(app, args):
     if app.conf.bepinex_installed:
         ui.good("BepInEx found at " + ui.grey(str(app.conf.bepinex)))
     else:
-        ui.info("Looking for BepInEx...")
-        candidates = find_bepinex(app.conf.game)
-        if candidates:
-            ui.good("Found BepInEx somewhere other than next to the game.")
-            chosen = ui.choose("Use which BepInEx?", candidates,
-                               lambda row: "%s %s" % (
-                                   ui.white(ui.truncate(str(row[0]), 54)),
-                                   ui.grey(row[1])))
-            if chosen is not None:
-                app.conf["bepinex_path"] = str(chosen[0])
-                ui.good("BepInEx path: " + str(chosen[0]))
+        # Setup is the place people come to fix this, so ask again even if the
+        # offer was already declined earlier in the session.
+        app.asked_bepinex = False
+        if not ensure_bepinex(app):
+            typed = ui.ask("Path to an existing BepInEx folder (blank to skip)")
+            if typed:
+                app.conf["bepinex_path"] = str(Path(typed.strip()).expanduser())
                 app.invalidate()
-        if not app.conf.bepinex_installed:
-            ui.note("No BepInEx found - mods won't load without it.")
-            if ui.confirm("Install the BepInEx pack from Thunderstore?", True):
-                _install_bepinex(app)
-            else:
-                typed = ui.ask("Path to an existing BepInEx folder (blank to skip)")
-                if typed:
-                    app.conf["bepinex_path"] = str(Path(typed.strip()).expanduser())
-                    app.invalidate()
 
     # ---- adopt existing mods
     print()
@@ -1421,22 +1409,100 @@ def _wrapper_for(game_path):
     return None
 
 
+def ensure_bepinex(app):
+    """Make sure a mod loader is in place, offering to fetch one if not.
+
+    BepInEx is what actually runs mods: without it the game boots vanilla and
+    every installed plugin just sits in the folder doing nothing. That makes it
+    worth asking about wherever the user lands, not only inside /setup.
+
+    Returns True if BepInEx is present by the time it returns.
+    """
+    if app.conf.bepinex_installed:
+        return True
+    if app.conf.game is None:
+        return False
+
+    if app.asked_bepinex:
+        # Already offered once this session and turned down - a single quiet
+        # reminder beats re-asking on every command.
+        ui.note("BepInEx still isn't installed, so mods won't load. /setup to fix.")
+        return False
+
+    ui.note("BepInEx is missing - it's the loader that runs your mods.")
+
+    # It may just be somewhere unexpected: nested under Content/, kept by
+    # another manager, or elsewhere in the Wine prefix.
+    ui.info("Looking for an existing BepInEx...")
+    candidates = find_bepinex(app.conf.game)
+    if candidates:
+        ui.good("Found one already on disk.")
+        chosen = ui.choose("Use which BepInEx?", candidates,
+                           lambda row: "%s %s" % (ui.white(ui.truncate(str(row[0]), 54)),
+                                                  ui.grey(row[1])))
+        if chosen is not None:
+            app.conf["bepinex_path"] = str(chosen[0])
+            app.invalidate()
+            ui.good("BepInEx path: " + str(chosen[0]))
+            return True
+        # They passed on the trees we found. Installing a second copy over the
+        # top of one they might still be using would be the wrong guess, so
+        # stop here rather than offering it.
+        app.asked_bepinex = True
+        ui.info("Skipped. Run /setup to point Beastfly at it later.")
+        return False
+
+    if not sys.stdin.isatty():
+        # Piped or scripted: never download something this big unprompted.
+        app.asked_bepinex = True
+        ui.info("Run /setup to install it.")
+        return False
+
+    app.asked_bepinex = True
+    print()
+    ui.info("Beastfly can download and install it for you now.")
+    if not ui.confirm("Install BepInEx? Mods won't run without it.", True):
+        ui.info("No problem - run /setup whenever you want it.")
+        return False
+    return _install_bepinex(app)
+
+
 def _install_bepinex(app):
-    package = mods_mod.find_bepinex_package(app.conf)
-    if package is None:
-        ui.fail("Couldn't find a BepInEx pack on Thunderstore. Install it manually.")
-        return
-    name = thunderstore.full_name(package)
-    version = thunderstore.latest(package)
-    with tempfile.TemporaryDirectory(prefix="beastfly-bep-") as scratch:
-        archive = Path(scratch) / "bepinex.zip"
-        thunderstore.download(package, archive, version,
-                              on_progress=lambda d, t: ui.progress("BepInEx", d, t))
+    """Download the newest BepInEx pack and unpack it beside the game exe."""
+    # A stale custom path would scatter the plugin folders somewhere the loader
+    # never looks, so a fresh install always targets <game>/BepInEx.
+    app.conf["bepinex_path"] = ""
+    try:
+        package = mods_mod.find_bepinex_package(app.conf)
+        if package is None:
+            ui.fail("Couldn't find a BepInEx pack on Thunderstore. Install it manually.")
+            return False
+        name = thunderstore.full_name(package)
+        version = thunderstore.latest(package)
+        with tempfile.TemporaryDirectory(prefix="beastfly-bep-") as scratch:
+            archive = Path(scratch) / "bepinex.zip"
+            thunderstore.download(package, archive, version,
+                                  on_progress=lambda d, t: ui.progress("BepInEx", d, t))
+            ui.progress_done()
+            written = mods_mod.install_bepinex(archive, app.conf)
+    except (thunderstore.SourceError, mods_mod.InstallError) as error:
         ui.progress_done()
-        written = mods_mod.install_bepinex(archive, app.conf)
+        ui.fail(str(error))
+        ui.info("Nothing was changed. Try again, or install BepInEx by hand.")
+        return False
+
+    app.invalidate()
     ui.good("Installed %s %s (%s)." % (name, version.get("version_number", ""),
                                        ui.plural(written, "file")))
-    ui.info("Launch the game once so BepInEx can generate its config.")
+    if not app.conf.bepinex_installed:
+        # The pack unpacked but not into the layout we expect - better to say
+        # so than to report success and have mods silently not load.
+        ui.note("Unpacked, but no core/BepInEx.dll turned up. Check /path.")
+        return False
+    ui.good("BepInEx is in " + ui.grey(str(app.conf.bepinex)))
+    ui.info("Launch the game once (/launch) so BepInEx can write its config.")
+    ui.info("Then /add to install mods. /logs shows what loaded.")
+    return True
 
 
 # ================================================================ SETTINGS
