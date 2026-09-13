@@ -7,23 +7,18 @@ check `available()` and keep a typed fallback.
 """
 
 import os
-import select
 import sys
 
+from . import keys
 from . import ui
 
-try:
-    import termios
-    import tty
-    RAW_AVAILABLE = True
-except ImportError:                                  # pragma: no cover
-    RAW_AVAILABLE = False
+RAW_AVAILABLE = keys.RAW_AVAILABLE
 
 CTRL_C, ENTER, ESC, SPACE = 3, 13, 27, 32
 
 
 def available():
-    return RAW_AVAILABLE and sys.stdin.isatty() and sys.stdout.isatty()
+    return keys.available()
 
 
 class Row:
@@ -118,15 +113,12 @@ class _Picker:
 
     def run(self):
         fd = sys.stdin.fileno()
-        saved = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
+        with keys.raw(fd):
             self.render()
             while True:
-                code = os.read(fd, 1)
-                if not code:
+                byte = keys.read(fd)
+                if byte is None:
                     return None
-                byte = code[0]
 
                 if byte in (CTRL_C, ord("q"), ord("Q")):
                     return None
@@ -170,17 +162,15 @@ class _Picker:
                 elif not self.multi and byte == SPACE:
                     return ("select", self.cursor)
                 self.render()
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
 
 def _escape(fd):
     sequence = ""
     while len(sequence) < 6:
-        ready, _, _ = select.select([fd], [], [], 0.02)
-        if not ready:
+        byte = keys.read_within(fd, 0.02)
+        if byte is None:
             break
-        sequence += os.read(fd, 1).decode("latin-1")
+        sequence += chr(byte)
         if sequence[-1].isalpha() or sequence[-1] == "~":
             break
     return {

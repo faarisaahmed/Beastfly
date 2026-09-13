@@ -2,11 +2,17 @@
 
 State lives in ~/.beastfly so it survives reinstalling or moving the game
 wrapper. Nothing here writes into the game folder.
+
+Everything that depends on which operating system, store or compatibility
+layer is in play is delegated to `platforms`; this module only decides what
+counts as an install and remembers what the user picked.
 """
 
 import json
 import os
 from pathlib import Path
+
+from . import platforms as plat
 
 HOME = Path.home()
 STATE_DIR = Path(os.environ.get("BEASTFLY_HOME", HOME / ".beastfly"))
@@ -14,9 +20,9 @@ CONFIG_FILE = STATE_DIR / "config.json"
 CACHE_DIR = STATE_DIR / "cache"
 BACKUP_DIR = STATE_DIR / "backups"
 
-# Silksong's folder name inside a Windows install, whichever store it came from.
-GAME_DIR_NAMES = ("Hollow Knight Silksong", "Hollow Knight Silksong Content")
-GAME_EXE = "Hollow Knight Silksong.exe"
+# Re-exported so callers can keep saying cfg.GAME_EXE.
+GAME_DIR_NAMES = plat.GAME_DIR_NAMES
+GAME_EXE = plat.WINDOWS_EXE
 
 DEFAULTS = {
     # INSTALLATION
@@ -29,17 +35,18 @@ DEFAULTS = {
     # PROFILES
     "remember_profile": True,
     # GAME
-    "launch_via_porting_kit": True,
+    "launch_via_wrapper": True,
+    "launch_via_steam": False,
     "confirm_launch": False,
     "backup_saves_on_launch": True,
     # DISPLAY
     "show_deps": True,
     "show_update_notifications": True,
     # PATHS
-    "game_path": "",        # .../Hollow Knight Silksong  (contains the .exe)
+    "game_path": "",        # .../Hollow Knight Silksong (holds the executable)
     "bepinex_path": "",     # defaults to <game_path>/BepInEx
     "downloads_path": str(HOME / "Downloads"),
-    "wrapper_path": "",     # the Porting Kit / Wineskin .app used to launch
+    "wrapper_path": "",     # the Wine wrapper .app used to launch, if any
     # INTEGRATIONS
     "thunderstore_community": "hollow-knight-silksong",
     "nexus_api_key": "",
@@ -63,6 +70,10 @@ class Config:
             for key, value in stored.items():
                 if key in DEFAULTS:
                     self.values[key] = value
+            # Beastfly used to be macOS-only and called this setting after the
+            # one wrapper it knew about. Carry the old answer across.
+            if "launch_via_wrapper" not in stored and "launch_via_porting_kit" in stored:
+                self.values["launch_via_wrapper"] = bool(stored["launch_via_porting_kit"])
 
     def save(self):
         STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -126,51 +137,30 @@ class Config:
 
 # ---------- discovery ----------
 
-def _is_dir(path):
-    """is_dir() that shrugs off the unreadable corners of /Applications."""
-    try:
-        return path.is_dir()
-    except OSError:
-        return False
+# Short local names for the error-swallowing filesystem helpers; the real
+# definitions live in platforms, next to everything else that touches disk.
+_is_dir = plat.is_dir
+_exists = plat.exists
+_listdir = plat.listdir
 
 
-def _exists(path):
-    try:
-        return path.exists()
-    except OSError:
-        return False
+def _rank(install):
+    """Sort key: what the person in front of this machine most likely plays.
 
-
-def _listdir(path):
-    try:
-        return list(path.iterdir())
-    except OSError:
-        return []
-
-
-def _search_roots():
-    """Places a Windows Silksong install plausibly lives on a Mac."""
-    roots = [
-        HOME / "Downloads",
-        HOME / "Applications",
-        Path("/Applications"),
-        HOME / "Library/Application Support/Porting Kit",
-        HOME / "Games",
-    ]
-    return [r for r in roots if _is_dir(r)]
-
-
-def _prefix_candidates(app):
-    """drive_c locations for Wineskin, CrossOver and Whisky style wrappers."""
-    return [
-        app / "Contents/SharedSupport/prefix/drive_c",
-        app / "Contents/drive_c",
-        app / "drive_c",
-    ]
+    A build that runs natively beats one behind a compatibility layer, and a
+    wrapper we know how to launch beats a bare prefix we can only guess at.
+    """
+    build_rank = 0 if plat.runs_natively(install["build"]) else 1
+    wrapper_rank = 0 if install["wrapper"] else 1
+    return (build_rank, wrapper_rank, str(install["game"]))
 
 
 def find_installs():
-    """Locate Silksong installs. Returns [{game, wrapper, kind}] best-first."""
+    """Locate Silksong installs.
+
+    Returns [{game, wrapper, kind, build}] best-first, covering native builds
+    from every store plus Windows builds inside any Wine prefix we can find.
+    """
     found = []
     seen = set()
 
@@ -179,57 +169,90 @@ def find_installs():
             game_dir = game_dir.resolve()
         except OSError:
             return
-        if game_dir in seen or not _exists(game_dir / GAME_EXE):
+        if game_dir in seen:
+            return
+        _, build = plat.executable(game_dir)
+        if build is None:
             return
         seen.add(game_dir)
-        found.append({"game": game_dir, "wrapper": wrapper, "kind": kind})
+        found.append({"game": game_dir, "wrapper": wrapper, "kind": kind,
+                      "build": build})
 
-    # Wine-style wrappers: look inside each .app's drive_c.
-    for root in _search_roots():
-        for app in _listdir(root):
-            if not app.name.endswith(".app"):
+    def scan(root, wrapper, kind):
+        """Try `root` itself and the usual folder names underneath it."""
+        add(root, wrapper, kind)
+        for name in plat.GAME_DIR_NAMES:
+            base = root / name
+            if not _is_dir(base):
                 continue
-            for drive_c in _prefix_candidates(app):
-                if not _is_dir(drive_c):
-                    continue
-                for store in ("GOG Games", "Program Files (x86)/Steam/steamapps/common",
-                              "Program Files/Steam/steamapps/common", "XboxGames",
-                              "Program Files", "Program Files (x86)"):
-                    for name in GAME_DIR_NAMES:
-                        add(drive_c / store / name, app, "porting-kit")
-                        add(drive_c / store / name / "Content", app, "porting-kit")
+            add(base, wrapper, kind)
+            # Xbox installs nest the real files one level further down, and GOG's
+            # Linux installers use a game/ subfolder.
+            for nested in ("Content", "game"):
+                add(base / nested, wrapper, kind)
 
-    # Bare Wine prefixes with no .app around them.
-    for root in _search_roots():
-        for prefix in _listdir(root):
-            drive_c = prefix / "drive_c"
-            if not _is_dir(drive_c):
-                continue
-            for name in GAME_DIR_NAMES:
-                add(drive_c / "GOG Games" / name, None, "wine-prefix")
+    # Native builds: Steam libraries on any drive, plus the per-platform spots.
+    for root, store in plat.native_roots():
+        scan(root, None, store)
 
-    # A native/Steam Mac install, in case this ever runs somewhere else.
-    for candidate in [
-        HOME / "Library/Application Support/Steam/steamapps/common/Hollow Knight Silksong",
-        Path("/Applications/Hollow Knight Silksong"),
-    ]:
-        add(candidate, None, "native")
+    # Windows builds inside a Wine prefix: Porting Kit, Whisky, CrossOver,
+    # Proton, Lutris, Heroic, Bottles, or a bare ~/.wine.
+    for drive_c, wrapper, kind in plat.wine_prefixes():
+        for store in plat.WINDOWS_STORE_DIRS:
+            store_dir = drive_c / store
+            if _is_dir(store_dir):
+                scan(store_dir, wrapper, kind)
 
+    found.sort(key=_rank)
     return found
+
+
+def describe_install(install):
+    """A short 'steam · windows build' line for the install picker."""
+    build = install.get("build")
+    words = [install.get("kind") or "install"]
+    if build and not plat.runs_natively(build):
+        words.append("%s build" % {plat.WINDOWS: "Windows", plat.MACOS: "macOS",
+                                   plat.LINUX: "Linux"}.get(build, build))
+    return " · ".join(words)
+
+
+# Writing a BepInEx tree into one of these would scatter loader files across a
+# folder full of unrelated things, so setup says something first.
+SHARED_FOLDERS = (Path("/Applications"), HOME / "Applications", HOME / "Desktop",
+                  HOME / "Downloads", HOME, Path("/"))
+
+
+def is_shared_folder(path):
+    """True if `path` is a folder full of other things, not a game folder."""
+    if path is None:
+        return False
+    try:
+        resolved = Path(path).resolve()
+    except OSError:
+        return False
+    for shared in SHARED_FOLDERS:
+        try:
+            if resolved == shared.resolve():
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def wrapper_for(game_path):
+    """Walk up from a game folder to the .app wrapper that contains it."""
+    if game_path is None:
+        return None
+    for parent in Path(game_path).parents:
+        if parent.name.endswith(".app"):
+            return parent
+    return None
 
 
 # ---------- BepInEx discovery ----------
 
 BEPINEX_MARKER = "core/BepInEx.dll"
-
-# Other managers keep a BepInEx tree per profile, well away from the game.
-MANAGER_ROOTS = (
-    HOME / "Library/Application Support/r2modmanPlus-local",
-    HOME / "Library/Application Support/ThunderstoreModManager",
-    HOME / ".config/r2modmanPlus-local",
-    HOME / ".cogfly",
-    HOME / "Library/Application Support/cogfly",
-)
 
 
 def _is_bepinex(path):
@@ -269,14 +292,13 @@ def find_bepinex(game_dir, deep=True):
 
         # Anywhere inside the same Wine prefix.
         if deep:
-            for parent in game_dir.parents:
-                if parent.name == "drive_c":
-                    for marker in _bounded_glob(parent, "BepInEx", 6):
-                        add(marker, "elsewhere in the prefix")
-                    break
+            prefix = plat.prefix_of(game_dir)
+            if prefix is not None:
+                for marker in _bounded_glob(prefix, "BepInEx", 6):
+                    add(marker, "elsewhere in the prefix")
 
     # Trees maintained by another mod manager.
-    for root in MANAGER_ROOTS:
+    for root in plat.manager_roots():
         if not _is_dir(root):
             continue
         for marker in _bounded_glob(root, "BepInEx", 5):

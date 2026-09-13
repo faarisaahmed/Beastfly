@@ -1,8 +1,6 @@
 """The Beastfly command loop: dispatch, rendering, and every command."""
 
 import os
-import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -13,6 +11,7 @@ from . import deps as deps_mod
 from . import game as game_mod
 from . import mods as mods_mod
 from . import picker
+from . import platforms as plat
 from . import prompt as prompt_mod
 from . import saves as saves_mod
 from . import ui
@@ -1124,6 +1123,8 @@ def cmd_backup(app, args):
     if action == "all":
         return _make_backup(app, None, app.profiles.active)
 
+    _note_extra_save_dirs(app)
+
     slots, other = saves_mod.slots(app.conf)
     if not slots:
         # Nothing recognisable - just take the lot.
@@ -1158,6 +1159,24 @@ def cmd_backup(app, args):
     if len([r for r in result if r.checked]) == 1:
         label = result[[r.checked for r in result].index(True)].label.replace(".dat", "")
     _make_backup(app, selected, label)
+
+
+def _note_extra_save_dirs(app):
+    """Say so when more than one save folder could be the right one.
+
+    Someone with both a Steam copy and a GOG copy, or who has played the same
+    game natively and under Wine, has two - and silently backing up the wrong
+    one is worse than saying which was chosen.
+    """
+    folders = saves_mod.save_dirs(app.conf)
+    if len(folders) < 2:
+        return
+    ui.note("Found %s for Silksong. Backing up the first:"
+            % ui.plural(len(folders), "save folder"))
+    for index, folder in enumerate(folders):
+        mark = ui.ok(ui.ACTIVE) if index == 0 else " "
+        print("    " + mark + " " + ui.grey(str(folder)))
+    print()
 
 
 def _make_backup(app, only, label):
@@ -1263,9 +1282,11 @@ def cmd_path(app, args):
     print()
     print(ui.header("Paths"))
     print()
+    saves = saves_mod.find_save_dir(app.conf)
     rows = [
         ("Silksong", app.conf["game_path"]),
         ("BepInEx", str(app.conf.bepinex) if app.conf.bepinex else ""),
+        ("Saves", str(saves) if saves else ""),
         ("Downloads", app.conf["downloads_path"]),
         ("Wrapper", app.conf["wrapper_path"]),
         ("State", str(cfg.STATE_DIR)),
@@ -1278,13 +1299,38 @@ def cmd_path(app, args):
         mark = ui.ok(ui.ON) if exists else ui.bad(ui.OFF)
         print("  " + mark + " " + ui.pad(ui.white(label), 13) + ui.grey(value))
     print()
+    print("    " + ui.pad(ui.white("Running on"), 13) + ui.grey(plat.HOST_LABEL))
+    build = plat.build_of(app.conf.game)
+    if build:
+        name = {plat.WINDOWS: "Windows", plat.MACOS: "macOS",
+                plat.LINUX: "Linux"}[build]
+        note = "runs natively" if build == plat.HOST else "needs a compatibility layer"
+        print("    " + ui.pad(ui.white("Build"), 13)
+              + ui.grey("%s · %s" % (name, note)))
     print("    " + ui.pad(ui.white("BepInEx"), 13)
           + (ui.ok("installed") if app.conf.bepinex_installed else ui.bad("not installed")))
     age = game_mod.log_age(app.conf)
     if age is not None:
         print("    " + ui.pad(ui.white("Last log"), 13) + ui.grey(_ago(age)))
     print()
+    _steam_hint(app)
     ui.info("Change these with /settings.")
+    print()
+
+
+def _steam_hint(app):
+    """Native builds started from Steam need the loader in their launch options.
+
+    Steam runs the game executable directly, so doorstop never gets a chance to
+    load. There is no way to set this from outside Steam - the string has to be
+    pasted in - so the least Beastfly can do is print it ready to copy.
+    """
+    options = game_mod.steam_launch_options(app.conf)
+    if not options or not game_mod.from_steam(app.conf.game):
+        return
+    ui.info("Playing from Steam? Library → Silksong → Properties → Launch Options:")
+    print("      " + ui.white(options))
+    ui.info("Without it Steam starts the game unmodded. /launch works either way.")
     print()
 
 
@@ -1334,27 +1380,25 @@ def cmd_setup(app, args):
         chosen = None
         if installs:
             chosen = ui.choose("Use which install?", installs,
-                               lambda i: "%s %s" % (ui.white(ui.truncate(str(i["game"]), 58)),
-                                                    ui.grey(i["kind"])))
+                               lambda i: "%s %s" % (ui.white(ui.truncate(str(i["game"]), 52)),
+                                                    ui.grey(cfg.describe_install(i))))
         if chosen is None:
-            typed = ui.ask("Path to the 'Hollow Knight Silksong' folder (contains the .exe)",
+            typed = ui.ask("Path to the Silksong folder (holds the .exe, .app or binary)",
                            app.conf["game_path"])
             if not typed:
                 ui.fail("Setup cancelled - no game path.")
                 return
             candidate = Path(typed.strip().strip('"').strip("'")).expanduser()
-            if not (candidate / cfg.GAME_EXE).exists() and \
-                    not (candidate / "Hollow Knight Silksong").exists():
+            if not plat.holds_game(candidate):
                 ui.note("No Silksong executable in there. Saving anyway.")
-            chosen = {"game": candidate, "wrapper": _wrapper_for(candidate), "kind": "manual"}
+            chosen = {"game": candidate, "wrapper": cfg.wrapper_for(candidate),
+                      "kind": "manual", "build": plat.build_of(candidate)}
 
         app.conf["game_path"] = str(chosen["game"])
         app.conf["bepinex_path"] = ""
-        if chosen.get("wrapper"):
-            app.conf["wrapper_path"] = str(chosen["wrapper"])
+        app.conf["wrapper_path"] = str(chosen["wrapper"]) if chosen.get("wrapper") else ""
         ui.good("Game path: " + str(chosen["game"]))
-        if chosen.get("wrapper"):
-            ui.good("Launching through: " + chosen["wrapper"].name)
+        _describe_build(app, chosen)
 
     # ---- downloads path
     if not Path(app.conf["downloads_path"]).is_dir():
@@ -1407,12 +1451,31 @@ def cmd_setup(app, args):
     print()
 
 
-def _wrapper_for(game_path):
-    """Walk up from a game folder to the .app wrapper that contains it."""
-    for parent in game_path.parents:
-        if parent.name.endswith(".app"):
-            return parent
-    return None
+def _describe_build(app, chosen):
+    """Say which build this is and how it will be started, while setup runs."""
+    build = chosen.get("build") or plat.build_of(chosen["game"])
+    if build is None:
+        return
+    name = {plat.WINDOWS: "Windows", plat.MACOS: "macOS", plat.LINUX: "Linux"}[build]
+    if chosen.get("wrapper"):
+        ui.good("%s build, launched through %s." % (name, chosen["wrapper"].name))
+    elif build == plat.HOST:
+        ui.good("%s build - runs natively here." % name)
+    elif build == plat.WINDOWS and plat.wine_command():
+        ui.good("Windows build - Beastfly will run it with Wine.")
+    elif build == plat.WINDOWS:
+        ui.note("Windows build on %s. Mods install fine; start the game from "
+                "Steam, Lutris or your wrapper." % plat.HOST_LABEL)
+    else:
+        ui.note("%s build on %s - mods install fine, but you'll need a %s "
+                "machine to play." % (name, plat.HOST_LABEL, name))
+
+    if cfg.is_shared_folder(chosen["game"]):
+        # A bare .app dropped in /Applications means BepInEx would unpack
+        # alongside every other program on the machine.
+        ui.note("That folder holds more than the game, so BepInEx would be")
+        ui.note("unpacked among your other apps. Move Silksong into a folder")
+        ui.note("of its own first, then run /setup again.")
 
 
 def ensure_bepinex(app):
@@ -1506,9 +1569,32 @@ def _install_bepinex(app):
         ui.note("Unpacked, but no core/BepInEx.dll turned up. Check /path.")
         return False
     ui.good("BepInEx is in " + ui.grey(str(app.conf.bepinex)))
+    _loader_hook_hint(app)
     ui.info("Launch the game once (/launch) so BepInEx can write its config.")
     ui.info("Then /add to install mods. /logs shows what loaded.")
     return True
+
+
+def _loader_hook_hint(app):
+    """Explain how the loader gets in front of the game on this platform.
+
+    Windows needs nothing - the game loads winhttp.dll on its own. Everywhere
+    else a launcher script has to be run instead of the executable, and that is
+    exactly the step people miss before reporting that mods do nothing.
+    """
+    build = plat.build_of(app.conf.game)
+    if build == plat.WINDOWS and plat.HOST != plat.WINDOWS:
+        ui.info("Under Wine, set " + ui.white("winhttp") + " to 'native, builtin' in winecfg")
+        ui.info("→ Libraries, or the loader never runs.")
+        return
+    if build in (plat.MACOS, plat.LINUX):
+        fixed = mods_mod.make_loader_runnable(app.conf)
+        if fixed:
+            ui.good("Made run_bepinex.sh executable - /launch uses it to load mods.")
+        else:
+            ui.note("No run_bepinex.sh in the game folder; this pack may be "
+                    "Windows-only.")
+        _steam_hint(app)
 
 
 # ================================================================ SETTINGS
@@ -1527,7 +1613,8 @@ TOGGLES = [
         ("remember_profile", "Remember active profile"),
     ]),
     ("GAME", [
-        ("launch_via_porting_kit", "Launch through Porting Kit"),
+        ("launch_via_wrapper", "Launch through Wine wrapper"),
+        ("launch_via_steam", "Launch through Steam"),
         ("confirm_launch", "Confirm before launching"),
         ("backup_saves_on_launch", "Back up saves before launching"),
     ]),
@@ -1684,11 +1771,10 @@ def _edit_path(app, key, label):
             return
     app.conf[key] = str(path)
     if key == "game_path":
-        wrapper = _wrapper_for(path)
-        if wrapper:
-            app.conf["wrapper_path"] = str(wrapper)
-            ui.good("Wrapper detected: " + wrapper.name)
+        wrapper = cfg.wrapper_for(path)
+        app.conf["wrapper_path"] = str(wrapper) if wrapper else ""
         app.conf["bepinex_path"] = ""
+        _describe_build(app, {"game": path, "wrapper": wrapper})
     app.invalidate()
     ui.good("%s set to %s." % (label, path))
 
@@ -2046,11 +2132,12 @@ def main(argv=None):
         print()
         print("  " + ui.bold(ui.accent("beastfly")) + ui.grey(" " + ui.VERSION))
         print("  " + ui.grey("A CLI mod manager for Hollow Knight: Silksong."))
-        print("  " + ui.grey("Built for running the Windows build on macOS"))
-        print("  " + ui.grey("through Porting Kit, where the GUI managers"))
-        print("  " + ui.grey("can't see your install."))
+        print("  " + ui.grey("Windows, macOS and Linux; Steam, GOG, Xbox and"))
+        print("  " + ui.grey("Epic; native, or the Windows build under Porting"))
+        print("  " + ui.grey("Kit, Whisky, CrossOver, Wine or Proton."))
         print()
         print(ui.field("Python", "%d.%d.%d" % sys.version_info[:3], 10))
+        print(ui.field("Host", plat.HOST_LABEL, 10))
         print(ui.field("State", str(cfg.STATE_DIR), 10))
         print(ui.field("Game", app.conf["game_path"] or "not configured", 10))
         print()

@@ -7,11 +7,66 @@ import sys
 
 VERSION = "0.1.1"
 
+
+def _prepare_windows_console():
+    """Make the Windows console speak UTF-8 before anything is printed.
+
+    The menus and headers are built from ✓, · and box-drawing characters. A
+    console left on a legacy code page, or a redirected stdout that inherited
+    cp1252, raises UnicodeEncodeError on the first one of those.
+    """
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+    except Exception:
+        pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+def _enable_windows_colour():
+    """Turn on ANSI handling in the Windows console.
+
+    Windows Terminal and PowerShell understand escape codes, but only once a
+    process asks for them. Without this, colour would have to be switched off
+    on Windows entirely - TERM is never set there, so the check below would
+    already have decided that.
+    """
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # -11 is STD_OUTPUT_HANDLE, 0x4 is ENABLE_VIRTUAL_TERMINAL_PROCESSING.
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x4))
+    except Exception:
+        return False
+
+
+_WINDOWS = os.name == "nt"
+if _WINDOWS:
+    _prepare_windows_console()
+
 _COLOR = (
     sys.stdout.isatty()
     and os.environ.get("NO_COLOR") is None
-    and os.environ.get("TERM") not in (None, "", "dumb")
+    and (_enable_windows_colour() if _WINDOWS
+         else os.environ.get("TERM") not in (None, "", "dumb"))
 )
+
+# ✓ and ✗ carry meaning - enabled or not - so on a console that can't encode
+# them they fall back to ASCII rather than printing as a replacement character.
+# Decoration elsewhere (rules, arrows) is allowed to degrade.
+try:
+    "✓ ● ═".encode(sys.stdout.encoding or "utf-8")
+    _UNICODE = True
+except (UnicodeEncodeError, LookupError):
+    _UNICODE = False
 
 
 def _sgr(code):
@@ -31,10 +86,11 @@ warn = _sgr("38;5;179")     # update available
 grey = _sgr("38;5;245")
 white = _sgr("38;5;253")
 
-ON = "✓"
-OFF = "✗"
-ACTIVE = "●"
-UPDATE = "↑"
+ON = "✓" if _UNICODE else "+"
+OFF = "✗" if _UNICODE else "-"
+ACTIVE = "●" if _UNICODE else "*"
+UPDATE = "↑" if _UNICODE else "^"
+
 
 def title():
     """One-line header. No ASCII art - it never read well at terminal size."""

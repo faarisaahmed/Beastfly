@@ -37,13 +37,14 @@ jobs:
           fi
 
       - run: tests/no-secrets.sh
+      - run: python tests/platforms.py
       - run: tests/smoke.sh
 
       - name: Package
         run: |
           NAME="beastfly-${{ steps.version.outputs.number }}"
           mkdir -p "dist/$NAME"
-          cp -R beastfly install.sh tests README.md LICENSE "dist/$NAME/"
+          cp -R beastfly install.sh install.ps1 tests README.md LICENSE "dist/$NAME/"
           find "dist/$NAME" -name '__pycache__' -type d -exec rm -rf {} +
           cd dist
           tar -czf "$NAME.tar.gz" "$NAME"
@@ -60,7 +61,7 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.number }}"
           cat > notes.md <<'EOF'
-          ### Install
+          ### Install - macOS and Linux
 
           ```sh
           curl -fsSL https://github.com/faarisaahmed/Beastfly/releases/latest/download/beastfly.tar.gz | tar xz
@@ -69,16 +70,29 @@ jobs:
           beastfly
           ```
 
-          `install.sh` drops a `beastfly` launcher in `~/.local/bin`. Nothing else
-          is written outside `~/.beastfly`. First run walks you through `/setup`.
+          `install.sh` drops a `beastfly` launcher in `~/.local/bin`.
 
-          Requires Python 3.8+ (macOS ships one). No other dependencies.
+          ### Install - Windows
+
+          ```powershell
+          curl.exe -fsSLo beastfly.zip https://github.com/faarisaahmed/Beastfly/releases/latest/download/beastfly.zip
+          Expand-Archive beastfly.zip -DestinationPath .
+          cd beastfly-VERSION
+          powershell -ExecutionPolicy Bypass -File .\install.ps1
+          ```
+
+          `install.ps1` drops a `beastfly.cmd` in `%LOCALAPPDATA%\Programs\beastfly`
+          and puts that folder on your PATH. Open a new terminal afterwards.
+
+          Nothing is written outside `~/.beastfly` either way. First run walks you
+          through `/setup`. Requires Python 3.8+ and nothing else.
 
           ### What it is
 
-          A terminal mod manager for Hollow Knight: Silksong, aimed at running the
-          **Windows** build on **macOS** through **Porting Kit**, where the GUI
-          managers can't find your install.
+          A terminal mod manager for Hollow Knight: Silksong that runs wherever the
+          game does: Windows, macOS and Linux; Steam, GOG, Xbox and Epic; the native
+          build, or the Windows build under Porting Kit, Whisky, CrossOver, Wine or
+          Proton.
 
           Thunderstore install/update with dependency resolution, Nexus version
           checks, profiles as enable/disable snapshots, arrow-key mod and profile

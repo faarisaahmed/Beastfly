@@ -4,31 +4,39 @@
 [![downloads](https://img.shields.io/github/downloads/faarisaahmed/Beastfly/total)](https://github.com/faarisaahmed/Beastfly/releases)
 [![ci](https://github.com/faarisaahmed/Beastfly/actions/workflows/ci.yml/badge.svg)](https://github.com/faarisaahmed/Beastfly/actions/workflows/ci.yml)
 
-A terminal mod manager for **Hollow Knight: Silksong**, built for the awkward
-case: running the **Windows** build on **macOS** through **Porting Kit**
-(Wineskin), where the GUI managers can't see your install.
+A terminal mod manager for **Hollow Knight: Silksong** that runs wherever the
+game does: **Windows, macOS and Linux**, from **Steam, GOG, Xbox or Epic**, as
+the native build or as the Windows build under **Porting Kit, Whisky,
+CrossOver, Wine or Proton**.
+
+It started with the case the GUI managers don't cover — the Windows build on a
+Mac, where they can't see your install — and now covers the rest of them too.
 
 Pure Python 3, standard library only. No pip, no build step.
 
 ## Install
 
-Open Terminal (⌘-Space, type "Terminal", Enter) and work through these three
-steps. Copy and paste each block.
+Beastfly needs **Python 3.8 or newer** and nothing else. Pick your platform.
 
-**1. Check for Python.** Beastfly needs Python 3.8 or newer:
+### macOS and Linux
+
+Open Terminal (on a Mac: ⌘-Space, type "Terminal", Enter) and work through
+these three steps. Copy and paste each block.
+
+**1. Check for Python:**
 
 ```sh
 python3 --version
 ```
 
 - Prints a version like `Python 3.12.2` → go to step 2.
-- Opens a dialog offering to install developer tools → accept it, let it
-  finish, then run the command again. macOS hasn't included Python since
+- Opens a dialog offering to install developer tools (macOS) → accept it, let
+  it finish, then run the command again. macOS hasn't included Python since
   version 12.3, so this is normal.
-- Says `command not found` → install Python from
-  [python.org/downloads](https://www.python.org/downloads/), then reopen
-  Terminal. The standard installer is all you need; there is nothing to
-  configure.
+- Says `command not found` → install it: `sudo apt install python3` on Debian
+  and Ubuntu, `sudo dnf install python3` on Fedora, or from
+  [python.org/downloads](https://www.python.org/downloads/) on a Mac. The
+  standard installer is all you need; there is nothing to configure.
 
 **2. Download and install.** Beastfly runs from the folder you unpack it into,
 so pick somewhere permanent — not `~/Downloads`, which people tend to clear
@@ -47,20 +55,56 @@ cd beastfly-*
 beastfly
 ```
 
-The first run finds your Silksong install, then offers to install **BepInEx** —
-the loader that actually runs mods, without which nothing loads. Press `y` and
-it downloads the current version and puts it beside the game exe for you. Any
-mods you already have are adopted as they are.
-
-That's it. From there: `/add` installs mods, `/toggle` turns them on and off,
-`/launch` starts the game.
-
 Prefer a clone? Same thing, and `git pull && ./install.sh` updates it:
 
 ```sh
 git clone https://github.com/faarisaahmed/Beastfly.git ~/beastfly
 cd ~/beastfly && ./install.sh
 ```
+
+### Windows
+
+Open **PowerShell** (Start, type "PowerShell", Enter).
+
+**1. Check for Python:**
+
+```powershell
+python --version
+```
+
+If that opens the Microsoft Store or says it isn't recognised, install Python
+from [python.org/downloads](https://www.python.org/downloads/) and **tick "Add
+python.exe to PATH"** on the first screen of the installer. Then close
+PowerShell and open it again.
+
+**2. Download and install:**
+
+```powershell
+mkdir "$env:USERPROFILE\beastfly"; cd "$env:USERPROFILE\beastfly"
+curl.exe -fsSLo beastfly.zip https://github.com/faarisaahmed/Beastfly/releases/latest/download/beastfly.zip
+Expand-Archive -Force beastfly.zip -DestinationPath .
+cd beastfly-*
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+`install.ps1` writes one file — `beastfly.cmd` in
+`%LOCALAPPDATA%\Programs\beastfly` — and adds that folder to your user PATH.
+
+**3. Open a new terminal** (so the PATH change takes effect) **and run it:**
+
+```powershell
+beastfly
+```
+
+### First run
+
+The first run finds your Silksong install, then offers to install **BepInEx** —
+the loader that actually runs mods, without which nothing loads. Press `y` and
+it downloads the current version and puts it beside the game executable for
+you. Any mods you already have are adopted as they are.
+
+That's it. From there: `/add` installs mods, `/toggle` turns them on and off,
+`/launch` starts the game.
 
 ### If something goes wrong
 
@@ -80,20 +124,29 @@ cd /wherever/beastfly/lives && ./install.sh
 ```
 
 **Mods are installed and enabled, but the game plays vanilla.** This one fails
-silently, so check `/logs` first:
+silently, so check `/logs` first. A log with your mods listed in it means they
+loaded and the mod itself is the problem. `No BepInEx log yet` after actually
+playing means BepInEx never ran, and why depends on how you play:
 
-- Log with your mods listed in it → they loaded, and the mod itself is the
-  problem.
-- `No BepInEx log yet` after actually playing → BepInEx never ran. Under a Wine
-  wrapper the loader needs `winhttp` treated as a native library, which not
-  every wrapper does by default. Open the wrapper's Wine configuration
-  (`winecfg` → *Libraries*), add `winhttp`, and set it to *native, builtin*.
-  Launching the game outside the wrapper won't load mods either — leave
-  *Launch through Porting Kit* on in `/settings`.
+- **Windows build under Wine** (Porting Kit, Whisky, CrossOver, Proton) — the
+  loader needs `winhttp` treated as a native library, which not every wrapper
+  does by default. Open the wrapper's Wine configuration (`winecfg` →
+  *Libraries*), add `winhttp`, and set it to *native, builtin*. Launching the
+  game outside the wrapper won't load mods either — leave *Launch through
+  Wine wrapper* on in `/settings`.
+- **Native macOS or Linux build** — the loader has to be started *in front of*
+  the game, by `run_bepinex.sh` rather than the executable. `/launch` does that
+  for you. Starting the game from Steam or your desktop does not, unless you
+  paste the launch options `/path` prints into Steam → *Properties* →
+  *Launch Options*.
+- **Native Windows build** — nothing extra is needed; if there's still no log,
+  check that `winhttp.dll` and `doorstop_config.ini` sit next to the exe, which
+  `/path` will tell you.
 
-`install.sh` writes one file, `~/.local/bin/beastfly`, and nothing else. All
-state lives in `~/.beastfly/`, so the only thing Beastfly ever puts in your
-game folder is mods.
+`install.sh` writes one file, `~/.local/bin/beastfly`, and nothing else
+(`install.ps1` writes one `beastfly.cmd` and a PATH entry). All state lives in
+`~/.beastfly/`, so the only thing Beastfly ever puts in your game folder is
+mods.
 
 ## Use
 
@@ -303,7 +356,7 @@ Then either paste it into Beastfly:
 
 ```
 beastfly> /settings
-  > 15                     # Nexus Mods API key
+  > 17                     # Nexus Mods API key
 ```
 
 or, if you'd rather not have it on disk, set it in your environment:
@@ -330,9 +383,22 @@ version-checked at all. Beastfly says so rather than guessing.
 
 ## Finding your install
 
-`/setup` searches for the game — GOG, Steam, Xbox and Wine-wrapper layouts
-under `~/Downloads`, `~/Applications`, `/Applications` and `~/Games` — and
-shows you what it found rather than making you type a path.
+`/setup` searches everywhere the game plausibly is on this machine and shows
+you what it found, rather than making you type a path. It knows about:
+
+| | |
+| --- | --- |
+| **Steam** | every library on every drive, read out of `libraryfolders.vdf` — including the one you moved to `D:` |
+| **GOG** | `C:\GOG Games`, GOG Galaxy's own folder, `~/GOG Games` on Linux |
+| **Xbox / Game Pass** | `XboxGames\…\Content`, which nests the real files a level deeper |
+| **Epic** | `Program Files\Epic Games` |
+| **macOS wrappers** | Porting Kit and Wineskin `.app` bundles, CrossOver bottles, Whisky bottles |
+| **Linux prefixes** | Proton (`steamapps/compatdata`), Lutris, Heroic, Bottles, and a bare `~/.wine` |
+
+It also works out *which build* it found — Windows, macOS or Linux — because
+that decides how the game has to be started and where its saves are. A Windows
+build on a Mac is the original case Beastfly was written for; a Windows build
+on Linux is the same problem with Proton in place of Porting Kit.
 
 **BepInEx is searched for separately**, because it isn't always next to the
 exe:
@@ -359,10 +425,20 @@ You can always override both paths in `/settings`.
 
 ## Save backups
 
-Silksong keeps its saves *inside the Wine prefix*
-(`drive_c/users/…/AppData/LocalLow/Team Cherry/Hollow Knight Silksong`), where
-nothing on the Mac side is backing them up — and a modded run is exactly the
-kind that eats a save file.
+Silksong hides its saves somewhere different on every platform, and a modded
+run is exactly the kind that eats a save file. Beastfly works out which folder
+belongs to the install you configured:
+
+| Where you play | Save folder |
+| --- | --- |
+| Windows | `%USERPROFILE%\AppData\LocalLow\Team Cherry\Hollow Knight Silksong` |
+| macOS (native) | `~/Library/Application Support/unity.Team Cherry.Hollow Knight Silksong` |
+| Linux (native) | `~/.config/unity3d/Team Cherry/Hollow Knight Silksong` |
+| Wine / Porting Kit | `drive_c/users/…/AppData/LocalLow/Team Cherry/Hollow Knight Silksong` |
+| Proton | `steamapps/compatdata/1030300/pfx/drive_c/users/steamuser/…` |
+
+The last two are the ones nothing else backs up. `/path` shows which one you
+got.
 
 So `/launch` snapshots them first, every time, labelled with the profile you're
 launching:
@@ -414,39 +490,89 @@ somewhere outside `~/.beastfly` too.
 
 ## Launching
 
-With **Launch through Porting Kit** on (the default), `/launch` opens the
-`.app` wrapper that contains your install — detected automatically during
-`/setup`. Doorstop is already wired up inside the wrapper, so enabled mods
-load. A native/Steam Mac install is launched directly instead.
+Getting the mod loader in front of the game is the one job that changes
+completely from platform to platform, so `/launch` picks a route from what it
+found during `/setup`:
+
+| Install | What `/launch` does |
+| --- | --- |
+| Windows build, on Windows | Runs the exe. Windows loads `winhttp.dll` itself, so mods come along. |
+| Windows build, in a macOS wrapper | Opens the `.app`, exactly like double-clicking it. Doorstop is wired up inside. |
+| Windows build, on Linux | Runs it under `wine` with `WINEPREFIX` pointed at the prefix it lives in. |
+| macOS or Linux build | Runs `run_bepinex.sh`, which is the **only** way mods load on those builds. |
+| Steam copy | Hands it to Steam, if you turn on *Launch through Steam*. |
+
+That fourth row is the one that catches people out. The native macOS and Linux
+builds have no `winhttp.dll` equivalent to hijack, so BepInEx ships a launcher
+script that sets `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD` and then starts the
+game. Start the executable any other way — from Steam, from your desktop — and
+it boots vanilla with no error to explain why. Beastfly makes the script
+executable when it installs BepInEx (the zip doesn't preserve that bit), uses
+it for `/launch`, and prints the Steam launch options you need if you'd rather
+start from Steam:
+
+```
+beastfly> /path
+  Playing from Steam? Library → Silksong → Properties → Launch Options:
+      "/…/Hollow Knight Silksong/run_bepinex.sh" %command%
+```
+
+Both routes are optional and both are in `/settings`: *Launch through Wine
+wrapper* and *Launch through Steam*.
 
 `/logs` tails `BepInEx/LogOutput.log` with errors highlighted, which pairs well
 with `/deps` when a mod silently fails to load.
 
 ## Platform support
 
-Built and tested for **macOS running the Windows build through Porting Kit**
-(Wineskin). That's the case the GUI managers don't cover.
+| | Finds the install | Manages mods | Launches |
+| --- | --- | --- | --- |
+| **Windows** — Steam, GOG, Xbox, Epic | yes | yes | yes |
+| **macOS** — native build, Steam or GOG | yes | yes | yes, via `run_bepinex.sh` |
+| **macOS** — Windows build in Porting Kit, Whisky, CrossOver | yes | yes | yes, opens the wrapper |
+| **Linux** — native build, Steam or GOG | yes | yes | yes, via `run_bepinex.sh` |
+| **Linux** — Windows build under Proton, Lutris, Heroic, Bottles | yes | yes | via `wine` or Steam |
 
-Everything except launching is platform-agnostic — mod scanning, profiles,
-Thunderstore, Nexus, backups all work off paths and would run anywhere Python
-does. `/launch` uses `open` on the `.app` wrapper, which is macOS-only; on
-Linux point the Silksong path at your Wine prefix and start the game yourself.
-A native or Steam macOS install is launched directly.
+Everything that isn't launching — scanning, profiles, Thunderstore, Nexus,
+dependency resolution, backups — works off paths and behaves the same
+everywhere.
+
+The terminal interface works everywhere too. On Windows, the arrow-key lists
+and the slash menu read keystrokes through `msvcrt` instead of a POSIX tty, and
+the console is switched to UTF-8 and ANSI colour on startup; if any of that
+isn't available, everything falls back to plain line input rather than
+breaking.
+
+The one thing Beastfly can't do for you is set Steam's launch options — Steam
+has no API for it, so `/path` prints the line to paste.
 
 Python 3.8+, standard library only.
 
 ## Development
 
 ```sh
+python3 tests/platforms.py     # discovery, saves and launching, for every platform
 tests/smoke.sh                 # every command against a throwaway fake install
 tests/smoke.sh "/path/to/Hollow Knight Silksong"   # or against a real BepInEx tree
 tests/no-secrets.sh            # refuse to commit credentials or state files
 ```
 
-The smoke test builds its own game folder and `BEASTFLY_HOME` in a temp
-directory, so it never touches a real install or your config. `BEASTFLY_DEBUG=1`
-turns command errors into full tracebacks. Both scripts run in CI on macOS and
-Linux against Python 3.8 and 3.12.
+```powershell
+python tests\platforms.py      # the same, on Windows
+powershell -ExecutionPolicy Bypass -File tests\smoke.ps1
+```
+
+`tests/platforms.py` is the one that matters for portability. Any given machine
+is only ever one platform, so it builds fake Steam libraries, Xbox folders,
+Wine prefixes and Proton prefixes on disk, tells `platforms` it is running
+somewhere else, and checks what comes back — including which command `/launch`
+would have run. That means the Windows and Linux paths are covered from a Mac,
+and vice versa.
+
+The smoke tests build their own game folder and `BEASTFLY_HOME` in a temp
+directory, so they never touch a real install or your config. `BEASTFLY_DEBUG=1`
+turns command errors into full tracebacks. Everything runs in CI on macOS,
+Linux and Windows against Python 3.8 and 3.12.
 
 **Never commit `config.json`** — it can hold your Nexus API key. It lives in
 `~/.beastfly/` and is gitignored, and `tests/no-secrets.sh` fails the build if
@@ -468,6 +594,7 @@ then publishes `.tar.gz`, `.zip` and `checksums.txt` to GitHub Releases.
 ```
 beastfly/
   cli.py        command loop, rendering, every command
+  platforms.py  per-OS paths, stores, prefixes and process launching
   config.py     settings + install discovery
   mods.py       scan / install / enable / remove, BepInEx bootstrap
   profiles.py   snapshots and drift
@@ -476,6 +603,7 @@ beastfly/
   saves.py      save-folder snapshots
   picker.py     the arrow-key list widgets
   prompt.py     the input line and slash menu
+  keys.py       raw keystrokes, over termios or msvcrt
   ui.py         colour and layout helpers
   sources/
     thunderstore.py

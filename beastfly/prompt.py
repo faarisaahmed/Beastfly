@@ -10,17 +10,12 @@ piping commands into beastfly still works.
 import codecs
 import os
 import re
-import select
 import sys
 
+from . import keys
 from . import ui
 
-try:
-    import termios
-    import tty
-    RAW_AVAILABLE = True
-except ImportError:                                  # pragma: no cover
-    RAW_AVAILABLE = False
+RAW_AVAILABLE = keys.RAW_AVAILABLE
 
 MAX_ROWS = 8
 
@@ -52,7 +47,7 @@ class Entry:
 
 
 def interactive():
-    return RAW_AVAILABLE and sys.stdin.isatty() and sys.stdout.isatty()
+    return keys.available()
 
 
 class LineEditor:
@@ -192,16 +187,13 @@ def read_line(prompt, entries, history, provider=None):
 
     editor = LineEditor(prompt, entries, history, provider)
     fd = sys.stdin.fileno()
-    saved = termios.tcgetattr(fd)
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
-    try:
-        tty.setraw(fd)
+    with keys.raw(fd):
         editor.render()
         while True:
-            byte = os.read(fd, 1)
-            if not byte:
+            code = keys.read(fd)
+            if code is None:
                 raise EOFError
-            code = byte[0]
 
             if code == CTRL_C:
                 # With text on the line, the first Ctrl-C just clears it.
@@ -275,22 +267,20 @@ def read_line(prompt, entries, history, provider=None):
                 continue
 
             # Printable text, possibly multi-byte UTF-8.
-            text = decoder.decode(byte)
+            text = decoder.decode(bytes([code]))
             if text:
                 editor.insert(text)
                 editor.render()
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
 
 def _handle_escape(fd, editor):
     """Arrow keys and friends. ESC alone closes the menu."""
     sequence = ""
     while len(sequence) < 6:
-        ready, _, _ = select.select([fd], [], [], 0.02)
-        if not ready:
+        byte = keys.read_within(fd, 0.02)
+        if byte is None:
             break
-        sequence += os.read(fd, 1).decode("latin-1")
+        sequence += chr(byte)
         if sequence[-1].isalpha() or sequence[-1] == "~":
             break
 

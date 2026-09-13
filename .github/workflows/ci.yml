@@ -27,5 +27,25 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Compile every module
         run: python -m compileall -q beastfly
+      - name: Check discovery and launching on every platform
+        run: python tests/platforms.py
       - name: Run the smoke suite
         run: tests/smoke.sh
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.8', '3.12']
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Compile every module
+        run: python -m compileall -q beastfly
+      - name: Check discovery and launching on every platform
+        run: python tests/platforms.py
+      - name: Run the smoke suite
+        run: powershell -ExecutionPolicy Bypass -File tests\smoke.ps1

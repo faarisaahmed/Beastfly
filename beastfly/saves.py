@@ -1,8 +1,11 @@
 """Save-file snapshots.
 
-Modded runs are the ones most likely to eat a save, and Silksong keeps its
-saves inside the Wine prefix where nothing on the Mac side backs them up. So
-Beastfly can snapshot them into ~/.beastfly/backups before each launch.
+Modded runs are the ones most likely to eat a save, and Silksong hides its
+saves somewhere different on every platform: AppData/LocalLow on Windows,
+Application Support on macOS, ~/.config/unity3d on Linux, and - when the
+Windows build is running under Wine or Proton - inside the prefix, where
+nothing on the host side backs it up. Beastfly snapshots whichever of those
+belongs to the configured install into ~/.beastfly/backups before each launch.
 """
 
 import re
@@ -12,43 +15,26 @@ import zipfile
 from pathlib import Path
 
 from . import config as cfg
+from . import platforms as plat
 
-SAVE_FOLDER = "Team Cherry/Hollow Knight Silksong"
+SAVE_FOLDER = plat.SAVE_FOLDER
 KEEP = 12                      # snapshots retained before the oldest is pruned
 STAMP = "%Y-%m-%d_%H%M%S"
 
 
 def find_save_dir(conf):
     """Where Silksong keeps its saves for this install, or None."""
-    game = conf.game
-    if game is None:
-        return None
-
-    # Windows build under Wine: <prefix>/drive_c/users/<user>/AppData/LocalLow/...
-    for parent in game.parents:
-        if parent.name == "drive_c":
-            users = parent / "users"
-            if not users.is_dir():
-                break
-            for user in _safe_iter(users):
-                candidate = user / "AppData/LocalLow" / SAVE_FOLDER
-                if candidate.is_dir():
-                    return candidate
-            break
-
-    # Native macOS build.
-    native = (Path.home() / "Library/Application Support"
-              / "unity.Team Cherry.Hollow Knight Silksong")
-    if native.is_dir():
-        return native
-    return None
+    candidates = plat.save_candidates(conf.game)
+    return candidates[0] if candidates else None
 
 
-def _safe_iter(path):
-    try:
-        return sorted(path.iterdir())
-    except OSError:
-        return []
+def save_dirs(conf):
+    """Every save folder that could belong to this install, best guess first.
+
+    Someone who has played the Steam copy and the GOG copy has two, and only
+    they know which one matters, so /backup can show the list.
+    """
+    return plat.save_candidates(conf.game)
 
 
 def backup_dir():

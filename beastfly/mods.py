@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
 from . import config as cfg
+from . import platforms as plat
 
 # Areas of the BepInEx tree that can hold a mod. Order matters for display.
 AREAS = ("plugins", "patchers", "monomod")
@@ -577,8 +578,17 @@ def _finish(mod, conf):
 
 # ---------------------------------------------------------------- BepInEx
 
+# What a BepInEx pack drops beside the game exe. The Silksong pack carries the
+# hook for all three platforms at once - winhttp.dll for Windows, libdoorstop
+# for macOS and Linux - so one pack serves every install.
 BEPINEX_ROOT_FILES = ("winhttp.dll", "doorstop_config.ini", "run_bepinex.sh",
+                      "libdoorstop.so", "libdoorstop.dylib", "steam_appid.txt",
                       ".doorstop_version", "changelog.txt", "doorstop_libs")
+
+# Zips have no concept of a Unix permission bit that survives every tool, and
+# the pack ships run_bepinex.sh as mode 644. Unpacked as-is it can't be run,
+# which on macOS and Linux means mods silently never load.
+BEPINEX_EXECUTABLES = ("run_bepinex.sh", "libdoorstop.so", "libdoorstop.dylib")
 
 
 def find_bepinex_package(conf):
@@ -665,7 +675,25 @@ def install_bepinex(archive, conf, on_progress=None):
 
     for area in AREAS:
         (conf.bepinex / area).mkdir(parents=True, exist_ok=True)
+    make_loader_runnable(conf)
     return written
+
+
+def make_loader_runnable(conf):
+    """Restore the executable bit on the loader's Unix launcher.
+
+    Returns the files it fixed, so setup can say the Unix hook is ready. The
+    permission bits mean nothing on Windows, but the files are still the right
+    ones to report on, so the platform is not checked here.
+    """
+    if conf.game is None:
+        return []
+    fixed = []
+    for name in BEPINEX_EXECUTABLES:
+        path = conf.game / name
+        if plat.is_file(path) and plat.make_executable(path):
+            fixed.append(path)
+    return fixed
 
 
 # ---------------------------------------------------- recognising downloads
